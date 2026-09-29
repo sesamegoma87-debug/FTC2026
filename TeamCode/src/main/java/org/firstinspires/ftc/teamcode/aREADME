@@ -1,0 +1,7 @@
+① P制御(基本) step1
+    ↓ 改良
+② atan2で最短経路のP制御(Autonomousの旋回はこれ) step2
+
+③ 台形制御(基本) step3
+    ↓ 改良
+④ 台形制御 + IMUでのP補正(Autonomousの直進はこれ) step4
