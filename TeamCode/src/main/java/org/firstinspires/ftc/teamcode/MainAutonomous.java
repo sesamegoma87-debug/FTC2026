@@ -3,28 +3,29 @@ package org.firstinspires.ftc.teamcode;
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 
-@Autonomous(name = "Main Autonomous")
+@Autonomous(name = "MainAutonomous", group = "Auto")
 public class MainAutonomous extends LinearOpMode {
 
     @Override
-    public void runOpMode() throws InterruptedException {
+    public void runOpMode() {
         Drivetrain drive = new Drivetrain(hardwareMap, this, telemetry);
 
-        telemetry.addData("Status", "Ready. Press START");
+        telemetry.addData("状態", "準備OK。ロボットを動かさず待ってください");
         telemetry.update();
 
         waitForStart();
-        if (isStopRequested()) return;
 
-        // ============================================================
-        // 最初は1つずつテストする。使わない行は // でコメントアウトしておく。
-        // ============================================================
+        boolean ok = drive.driveTo(40, 0, 0, 0.5, 2.0);
 
-        // テスト1: 直進(24インチ進むか、定規で実測する → TICKS_PER_INCHの調整)
-        drive.driveStraight(35.4, 0.5);
-
-        drive.turnToHeading(-180);
-        telemetry.addData("Status", "Auto Complete");
-        telemetry.update();
+        while (opModeIsActive()) {
+            double x = drive.getX();
+            double y = drive.getY();
+            double h = drive.getHeading();
+            telemetry.addData("結果", ok ? "OK" : "TIMEOUT");
+            telemetry.addData("センサーX (in)", "%.2f  (%.1f cm)", x, x * 2.54);
+            telemetry.addData("センサーY (in)", "%.2f  (%.1f cm)", y, y * 2.54);
+            telemetry.addData("センサー向き (deg)", "%.1f", h);
+            telemetry.update();
+        }
     }
 }
