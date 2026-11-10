@@ -2,6 +2,7 @@ package org.firstinspires.ftc.teamcode;
 
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
+import com.qualcomm.robotcore.util.ElapsedTime;
 
 @Autonomous(name = "MainAutonomous", group = "Auto")
 public class MainAutonomous extends LinearOpMode {
@@ -14,18 +15,26 @@ public class MainAutonomous extends LinearOpMode {
         telemetry.update();
 
         waitForStart();
+        if (isStopRequested()) return;
 
-        boolean ok = drive.driveTo(40, 0, 0, 0.5, 2.0);
+        ElapsedTime total = new ElapsedTime();
+        boolean o1 = drive.spinBy(90);    // 反時計回りに +90°
+        boolean o2 = drive.spinBy(-90);   // 元の向きに戻る(-90°)
+        boolean o3 = drive.spinBy(180);   // +180°
+        boolean o4 = drive.spinBy(-180);  // 元に戻る(-180°)
+        double used = total.seconds();
+
+        drive.stop();
 
         while (opModeIsActive()) {
-            double x = drive.getX();
-            double y = drive.getY();
-            double h = drive.getHeading();
-            telemetry.addData("結果", ok ? "OK" : "TIMEOUT");
-            telemetry.addData("センサーX (in)", "%.2f  (%.1f cm)", x, x * 2.54);
-            telemetry.addData("センサーY (in)", "%.2f  (%.1f cm)", y, y * 2.54);
-            telemetry.addData("センサー向き (deg)", "%.1f", h);
+            telemetry.addData("結果 90 / -90 / 180 / -180", "%s / %s / %s / %s",
+                    o1 ? "OK" : "NG", o2 ? "OK" : "NG", o3 ? "OK" : "NG", o4 ? "OK" : "NG");
+            telemetry.addData("所要時間 (s)", "%.2f", used);
+            telemetry.addData("センサー向き (deg)", "%.1f  (0付近なら元に戻っている)", drive.getHeading());
+            telemetry.addData("センサーX (in)", "%.2f", drive.getX());
+            telemetry.addData("センサーY (in)", "%.2f", drive.getY());
             telemetry.update();
+            sleep(20);
         }
     }
 }

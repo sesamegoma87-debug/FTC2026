@@ -17,7 +17,7 @@ import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
  * メカナム4輪 + goBILDA Pinpoint の走行クラス。
  * 座標系: X=前, Y=左, heading=反時計回りが+(原点 = このクラスを作った地点・向き)
  *
- *  driveTo(x, y, heading)  : 絶対座標へ移動(台形プロファイル + FF + PD)
+ *  driveTo(x, y, heading)  : 絶対座標へ移動(台形プロファイル + FF + PD + 終端の積分)
  *  driveBy(前, 左, 旋回)    : 今の位置からの相対移動
  *  driveStraight(inch, p)  : 今の向きのまま直進
  *  turnToHeading(deg)      : その場で旋回(PID)
@@ -32,11 +32,13 @@ public class Drivetrain {
 
     private double poseX, poseY, poseHeadingDeg;   // updatePose() のキャッシュ(インチ/度)
 
-    // ================= Pinpoint 設定(実測値) =================
+    // ================= Pinpoint 設定 =================
+    // ★オフセットは「180°回転テスト」で校正する(手順は説明を参照)
     static final double POD_X_OFFSET_MM = 94.0;     // Xポッド(左側): 回転中心から左が+ (mm)
     static final double POD_Y_OFFSET_MM = 158.5;    // Yポッド(右側): 回転中心から前が+ (mm)
     static final boolean X_POD_REVERSED = false;    // 前に押してXが減るなら true
     static final boolean Y_POD_REVERSED = true;     // 左に押してYが減るなら true
+    static final double ENCODER_TICKS_PER_MM = 19.61;   // 手押し100cm×3回で補正済み
 
     // ================= フィードフォワード(FeedforwardTunerで測定) =================
     // パワー = KS * 向き + KV * 速度
@@ -46,8 +48,8 @@ public class Drivetrain {
     static double NOMINAL_VOLTAGE = 12.88;            // 測定時のバッテリー電圧
 
     // ================= プロファイル =================
-    static double VEL_FRACTION = 0.45;              // 最高速 = このパワー割合で出る速度
-    static double ACCEL_TIME = 0.90;                // 最高速まで加速する秒数(大きいほどゆるやか)
+    static double VEL_FRACTION = 0.40;              // 最高速 = このパワー割合で出る速度
+    static double ACCEL_TIME = 0.85;                // 最高速まで加速する秒数(大きいほどゆるやか)
     static double TURN_ACCEL_TIME = 0.70;
 
     // ================= フィードバック(プロファイルとの誤差を補正) =================
@@ -58,14 +60,24 @@ public class Drivetrain {
     static double VEL_FILTER = 0.3;                 // 速度ローパス
 
     // ================= 終端処理 =================
-    static double BREAKAWAY_POWER = 0.08;           // 止まっているときの最低パワー
-    static double STUCK_SPEED_IN = 1.0;             // これ未満なら「止まっている」
-    static double STUCK_RATE_DEG = 5.0;
-    static double SETTLE_SPEED_IN = 1.5;            // 終了判定の速度条件
+    // プロファイル完了後、止まったまま残った誤差を「パワーを少しずつ上げて」押し切る
+    static double I_POS_KI = 0.30;           // 位置の積分 (power / (in·s))
+    static double I_POS_MAX = 0.20;          // 積分で足すパワーの上限(前後・横)
+    static double I_HDG_KI = 0.08;           // 向きの積分 (power / (deg·s))
+    static double I_HDG_MAX = 0.20;          // 積分で足すパワーの上限(回転)
+    static double STUCK_SPEED_IN = 3.0;      // これ未満の速さのときだけ積分する
+    static double STUCK_RATE_DEG = 15.0;     // これ未満の回転速度のときだけ積分する
+    static double SETTLE_SPEED_IN = 1.5;     // 終了判定の速度条件
     static double SETTLE_RATE_DEG = 5.0;
     static double SETTLE_TIME = 0.15;
     static double DEFAULT_POS_TOL_IN = 1.0;
     static double DEFAULT_HEAD_TOL_DEG = 2.0;
+
+    // ================= 超信地旋回(spinBy / spinTo) =================
+    static double SPIN_VEL_FRACTION = 0.5;   // 最高回転速度 = このパワー割合で出る速度
+    static double SPIN_ACCEL_TIME = 0.6;     // 最高速まで加速する秒数
+    static double SPIN_TOL_DEG = 1.0;        // 許容誤差(度)
+    static double SPIN_TIMEOUT_SEC = 5.0;
 
     // ================= driveStraight(従来どおり) =================
     static final double ACCEL_DISTANCE_IN = 13.4;
@@ -116,7 +128,7 @@ public class Drivetrain {
         odo = hardwareMap.get(GoBildaPinpointDriver.class, "odo");
         odo.setOffsets(POD_X_OFFSET_MM, POD_Y_OFFSET_MM, DistanceUnit.MM);
         odo.setEncoderResolution(GoBildaPinpointDriver.GoBildaOdometryPods.goBILDA_4_BAR_POD);
-        odo.setEncoderResolution(19.61, DistanceUnit.MM);     // 手押し3回の平均で補正
+        odo.setEncoderResolution(ENCODER_TICKS_PER_MM, DistanceUnit.MM);
         odo.setEncoderDirections(
                 X_POD_REVERSED ? GoBildaPinpointDriver.EncoderDirection.REVERSED
                         : GoBildaPinpointDriver.EncoderDirection.FORWARD,
@@ -128,7 +140,7 @@ public class Drivetrain {
     }
 
     // =====================================================================
-    //  driveTo : 台形プロファイル + フィードフォワード + PD
+    //  driveTo : 台形プロファイル + フィードフォワード + PD + 終端の積分
     // =====================================================================
     public boolean driveTo(double targetX, double targetY, double targetHeadingDeg) {
         return driveTo(targetX, targetY, targetHeadingDeg, DEFAULT_POS_TOL_IN, DEFAULT_HEAD_TOL_DEG);
@@ -148,7 +160,6 @@ public class Drivetrain {
         final double absDH = Math.abs(dH);
         final double hSign = Math.signum(dH);
 
-        // 進行方向(開始姿勢でのロボット基準)から速度・加速度の上限を決める。
         double vMax = 1, aMax = 1;
         if (D > 1e-6) {
             double h0 = Math.toRadians(startH);
@@ -165,6 +176,7 @@ public class Drivetrain {
         ElapsedTime settleTimer = new ElapsedTime();
         double lastX = startX, lastY = startY, lastH = startH;
         double vx = 0, vy = 0, w = 0;     // フィールド座標の速度 / 角速度(反時計回り+)
+        double iF = 0, iL = 0, iW = 0;    // 終端の積分(パワー単位)
 
         while (opMode.opModeIsActive() && timer.seconds() < DRIVE_TIMEOUT_SEC) {
             double dt = Math.max(dtTimer.seconds(), 1e-3);
@@ -189,7 +201,7 @@ public class Drivetrain {
             double refH = startH + hSign * hr[0];
             double refW = hSign * hr[1];
 
-            // 減速中はKS(摩擦分の押し)を切る。切らないと止まる直前まで押してしまい行き過ぎる
+            // 減速中はKS(摩擦分の押し)を切る
             double ksP = pr[2] < 0 ? 0 : 1;
             double ksW = hr[2] < 0 ? 0 : 1;
 
@@ -227,23 +239,38 @@ public class Drivetrain {
                     + HDG_KP * shortestAngleDifference(poseHeadingDeg, refH)
                     + HDG_KD * (refW - w);
 
-            // プロファイル完了後は、許容内の成分を0にする(最低パワーで押し出さない)
+            // --- 終端: プロファイル完了後の処理 ---
             boolean profileDone = pr[0] >= D - 1e-6 && hr[0] >= absDH - 1e-6;
             if (profileDone) {
-                if (posOk) { f = 0; l = 0; }
-                if (headOk) tn = 0;
+                // ロボット基準の残り誤差
+                double ex = targetX - poseX, ey = targetY - poseY;
+                double errF = ex * c + ey * s;
+                double errL = -ex * s + ey * c;
+
+                if (posOk) {                       // 許容内: 押さない・積分を捨てる
+                    f = 0; l = 0; iF = 0; iL = 0;
+                } else {
+                    if (speed < STUCK_SPEED_IN) {  // ほぼ止まっている間だけ積分
+                        iF = clamp(iF + I_POS_KI * errF * dt, -I_POS_MAX, I_POS_MAX);
+                        iL = clamp(iL + I_POS_KI * errL * dt, -I_POS_MAX, I_POS_MAX);
+                    }
+                    f += iF; l += iL;
+                }
+
+                if (headOk) {
+                    tn = 0; iW = 0;
+                } else {
+                    if (Math.abs(w) < STUCK_RATE_DEG) {
+                        iW = clamp(iW + I_HDG_KI * headErr * dt, -I_HDG_MAX, I_HDG_MAX);
+                    }
+                    tn += iW;
+                }
             }
 
             double fl = f - l - tn, fr = f + l + tn, bl = f + l - tn, br = f - l + tn;
             double max = Math.max(Math.max(Math.abs(fl), Math.abs(fr)),
                     Math.max(Math.abs(bl), Math.abs(br)));
-            double scale = 1.0;
-            if (max > 1.0) {
-                scale = 1.0 / max;
-            } else if (profileDone && speed < STUCK_SPEED_IN && Math.abs(w) < STUCK_RATE_DEG
-                    && max > 1e-6 && max < BREAKAWAY_POWER) {
-                scale = BREAKAWAY_POWER / max;      // 止まっているときだけ摩擦突破
-            }
+            double scale = max > 1.0 ? 1.0 / max : 1.0;
             setWheelPowers(fl * scale, fr * scale, bl * scale, br * scale);
 
             // 調整用テレメトリ
@@ -255,12 +282,104 @@ public class Drivetrain {
             telemetry.addData("Cross err (in)", "%.2f", cross);
             telemetry.addData("Ref w / Actual w (deg/s)", "%.1f / %.1f", refW, w);
             telemetry.addData("Dist / HeadErr", "%.2f in / %.2f deg", dist, headErr);
-            telemetry.addData("Power boost (1.00=なし)", "%.2f", scale);
+            telemetry.addData("Power f / l / turn", "%.2f / %.2f / %.2f", f, l, tn);
+            telemetry.addData("Integral f / l / turn", "%.2f / %.2f / %.2f", iF, iL, iW);
             telemetry.update();
         }
 
         stop();
         telemetry.addData("driveTo", "TIMEOUT");
+        telemetry.update();
+        return false;
+    }
+
+    // =====================================================================
+    //  超信地旋回: 並進は一切出さず、その場で回る(位置の補正はしない)
+    // =====================================================================
+    /** 今の向きから deltaDeg だけ回る(反時計回りが+)。180°超もOK。 */
+    public boolean spinBy(double deltaDeg) {
+        return spinBy(deltaDeg, SPIN_TOL_DEG);
+    }
+
+    /** 絶対角度 targetDeg を向く(最短方向)。 */
+    public boolean spinTo(double targetDeg) {
+        updatePose();
+        return spinBy(shortestAngleDifference(poseHeadingDeg, targetDeg), SPIN_TOL_DEG);
+    }
+
+    public boolean spinBy(double deltaDeg, double tolDeg) {
+        final double absD = Math.abs(deltaDeg);
+        if (absD < tolDeg) return true;
+
+        final double sign = Math.signum(deltaDeg);
+        final double voltScale = clamp(NOMINAL_VOLTAGE / Math.max(getVoltage(), 1.0), 0.8, 1.4);
+        final double wMax = SPIN_VEL_FRACTION / KV_W;
+        final double wAcc = wMax / SPIN_ACCEL_TIME;
+
+        updatePose();
+        double lastH = poseHeadingDeg;
+        double turned = 0;          // 開始からの回転量(積算・度)
+        double w = 0, iW = 0;
+
+        ElapsedTime timer = new ElapsedTime();
+        ElapsedTime dtTimer = new ElapsedTime();
+        ElapsedTime settleTimer = new ElapsedTime();
+
+        while (opMode.opModeIsActive() && timer.seconds() < SPIN_TIMEOUT_SEC) {
+            double dt = Math.max(dtTimer.seconds(), 1e-3);
+            dtTimer.reset();
+            double t = timer.seconds();
+
+            updatePose();
+            double dh = shortestAngleDifference(lastH, poseHeadingDeg);
+            turned += dh;
+            lastH = poseHeadingDeg;
+            w = (1 - VEL_FILTER) * w + VEL_FILTER * dh / dt;
+
+            double[] hr = trapezoid(absD, wMax, wAcc, t);
+            double refAngle = sign * hr[0];
+            double refW = sign * hr[1];
+            double err = deltaDeg - turned;
+
+            boolean inTol = Math.abs(err) < tolDeg;
+            boolean slow = Math.abs(w) < SETTLE_RATE_DEG;
+            if (!(inTol && slow)) {
+                settleTimer.reset();
+            } else if (settleTimer.seconds() > SETTLE_TIME) {
+                stop();
+                return true;
+            }
+
+            double ksScale = hr[2] < 0 ? 0 : 1;      // 減速中は摩擦分を切る
+            double ff = hr[1] > 1e-6 ? sign * KS_W * ksScale + KV_W * refW : 0;
+            double tn = ff * voltScale
+                    + HDG_KP * (refAngle - turned)
+                    + HDG_KD * (refW - w);
+
+            boolean profileDone = hr[0] >= absD - 1e-6;
+            if (profileDone) {
+                if (inTol) {
+                    tn = 0; iW = 0;
+                } else {
+                    if (Math.abs(w) < STUCK_RATE_DEG) {
+                        iW = clamp(iW + I_HDG_KI * err * dt, -I_HDG_MAX, I_HDG_MAX);
+                    }
+                    tn += iW;
+                }
+            }
+
+            setRobotPower(0, 0, tn);     // 前後・横は0。回転だけ
+
+            telemetry.addData("--- spin ---", "t=%.2f s", t);
+            telemetry.addData("Turned / Target (deg)", "%.1f / %.1f", turned, deltaDeg);
+            telemetry.addData("Err (deg)", "%.2f", err);
+            telemetry.addData("Ref w / Actual w (deg/s)", "%.1f / %.1f", refW, w);
+            telemetry.addData("Power turn / integral", "%.2f / %.2f", tn, iW);
+            telemetry.update();
+        }
+
+        stop();
+        telemetry.addData("spin", "TIMEOUT");
         telemetry.update();
         return false;
     }
