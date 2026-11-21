@@ -52,7 +52,7 @@ public class Drivetrain {
     static double ACCEL_TIME = 0.85;                // 最高速まで加速する秒数(大きいほどゆるやか)
     static double TURN_ACCEL_TIME = 0.70;
 
-    // ================= フィードバック(プロファイルとの誤差を補正) =================
+    // ================= フィードバックf(プロファイルとの誤差を補正) =================
     static double POS_KP = 0.045;                   // power / in
     static double POS_KD = 0.012;                   // power / (in/s)   速度誤差
     static double HDG_KP = 1.0 / 60.0;              // power / deg

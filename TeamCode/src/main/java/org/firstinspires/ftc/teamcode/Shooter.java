@@ -4,44 +4,41 @@ import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 
-/** シューター部品クラス。TeleOp/Autonomousから生成して使う */
+/** モーター単体テスト用（ギア比なし・高精細速度取得版） */
 public class Shooter {
-    /** ホイール1回転あたりのtick = 28(モーター軸counts/rev) × 5.2(減速比) ÷ 3(増速比)
-     *  [要確認] 1150rpm版(5.2:1)の仮定。1620rpm版なら 103.6/3.0 に差し替え */
-    private static final double TICKS_PER_WHEEL_REV = 145.6 / 3.0; // ≈48.53
-    /** ホイール側無負荷上限 = 1150 × 3 [要確認] 1620rpm版なら4860 */
-    private static final double MAX_WHEEL_RPM = 3450.0;
-    private static final double READY_TOL_RPM = 100.0;
+    // goBILDA 5203 (1150 RPM) の出力軸1回転あたりのカウント数
+    private static final double PPR = 145.1;
 
     private final DcMotorEx motor;
-    private double targetRpm = 0;
+    private double ticksPerSec = 0;
+    private double motorRps = 0; // 1秒あたりの回転数 (回転/s)
+    private double motorRpm = 0; // 1分あたりの回転数 (RPM)
 
     public Shooter(HardwareMap hw) {
-        motor = hw.get(DcMotorEx.class, "shoot_motor"); // Configurationの名前と完全一致
-        motor.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-        motor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-        motor.setDirection(DcMotor.Direction.FORWARD); // [要確認] 逆回転ならREVERSE
+        motor = hw.get(DcMotorEx.class, "shoot_motor");
+        motor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER); // 生パワー制御
+        motor.setDirection(DcMotor.Direction.FORWARD);      // 逆ならREVERSE
         motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
+        motor.setPower(0);
     }
 
-    /** 目標rpm。0で惰行停止 */
-    public void setTargetRpm(double rpm) {
-        targetRpm = Math.max(0, Math.min(rpm, MAX_WHEEL_RPM));
-        if (targetRpm == 0) {
-            motor.setPower(0);
-        } else {
-            motor.setVelocity(targetRpm * TICKS_PER_WHEEL_REV / 60.0);
-        }
+    public void setPower(double p) {
+        motor.setPower(Math.max(-1.0, Math.min(1.0, p)));
     }
 
-    public double getRpm() {
-        return motor.getVelocity() * 60.0 / TICKS_PER_WHEEL_REV;
+    /** loop()ごとに呼ぶ。Control Hub内部の正確な速度を取得 */
+    public void update() {
+        // 1秒間に進んだエンコーダーのカウント数を直接取得（通信ズレの影響を受けない）
+        ticksPerSec = motor.getVelocity();
+
+        // 1秒あたりの回転数 (RPS) = 1秒のカウント数 ÷ 1回転のカウント数
+        motorRps = ticksPerSec / PPR;
+
+        // 1分あたりの回転数 (RPM) = 1秒あたりの回転数 × 60秒
+        motorRpm = motorRps * 60.0;
     }
 
-    /** 目標±許容誤差に入ったらtrue。フィードの許可に使う */
-    public boolean isReady() {
-        return targetRpm > 0 && Math.abs(getRpm() - targetRpm) <= READY_TOL_RPM;
-    }
-
-    public double getTargetRpm() { return targetRpm; }
+    public double getTicksPerSec() { return ticksPerSec; }
+    public double getMotorRps()    { return motorRps; }
+    public double getMotorRpm()    { return motorRpm; }
 }
