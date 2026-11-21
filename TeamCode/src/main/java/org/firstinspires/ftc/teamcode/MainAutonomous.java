@@ -17,10 +17,8 @@ public class MainAutonomous extends LinearOpMode {
         waitForStart();
         if (isStopRequested()) return;
         ElapsedTime total = new ElapsedTime();
-        drive.driveTo(30,0,0);
-        drive.spinTo(270);
-        drive.driveTo(30,0,0);
-
+        drive.driveTo(10,0,0);
+        drive.spinTo(90);
 
         double used = total.seconds();
 
